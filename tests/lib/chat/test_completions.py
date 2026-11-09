@@ -11,8 +11,11 @@ from inline_snapshot import snapshot
 import openai
 from openai import OpenAI, AsyncOpenAI
 from tests.respx2 import MockRouter
+from openai._types import omit
 from openai._utils import assert_signatures_in_sync
 from openai._compat import PYDANTIC_V1
+from openai.types.chat import ChatCompletion
+from openai.lib._parsing._completions import parse_chat_completion
 
 from ..utils import print_obj
 from ...conftest import base_url
@@ -21,8 +24,52 @@ from ..schema_types.query import Query
 
 _T = TypeVar("_T")
 
+
+def test_parse_custom_tool_call() -> None:
+    completion = ChatCompletion.model_validate(
+        {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-5",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "logprobs": None,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "custom",
+                                "custom": {"name": "code_exec", "input": "print('hi')"},
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+    )
+
+    parsed = parse_chat_completion(
+        response_format=omit,
+        input_tools=[{"type": "custom", "custom": {"name": "code_exec"}}],
+        chat_completion=completion,
+    )
+
+    tool_calls = parsed.choices[0].message.tool_calls
+    assert tool_calls is not None
+    assert len(tool_calls) == 1
+    assert tool_calls[0].type == "custom"
+    assert tool_calls[0].custom.name == "code_exec"
+    assert tool_calls[0].custom.input == "print('hi')"
+    assert parsed.model_dump()["choices"][0]["message"]["tool_calls"][0]["custom"]["name"] == "code_exec"
+    assert parsed.model_dump()["choices"][0]["message"]["tool_calls"][0]["custom"]["input"] == "print('hi')"
+
+
 # all the snapshots in this file are auto-generated from the live API
-#
 # you can update them with
 #
 # `OPENAI_LIVE=1 pytest --inline-snapshot=fix -p no:xdist -o addopts=""`
